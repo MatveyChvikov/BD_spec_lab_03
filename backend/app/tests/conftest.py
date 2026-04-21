@@ -1,19 +1,39 @@
-"""Pytest configuration and fixtures."""
+"""Pytest configuration and fixtures (для только test_domain: ``-p no:anyio`` — см. CI)."""
 
 import asyncio
 import os
-import uuid
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Один in-memory SQLite для conftest и для app.infrastructure.db (импорт после установки URL)
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = (
         "sqlite+aiosqlite:///file:pytest_lab02?mode=memory&cache=shared&uri=true"
     )
+
+# True, если в сессии есть app/tests/test_integration.py — нужен общий SQLite-движок приложения.
+_session_has_integration_tests = False
+
+
+def pytest_collection_modifyitems(config, items):
+    global _session_has_integration_tests
+    _session_has_integration_tests = any(
+        "test_integration" in item.nodeid for item in items
+    )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Закрыть глобальный async engine после сессии (интеграционные тесты на SQLite)."""
+    if not _session_has_integration_tests:
+        return
+    from app.infrastructure.db import reset_engine_pool
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(reset_engine_pool())
+    finally:
+        loop.close()
 
 _SQLITE_DDL = [
     """
@@ -59,7 +79,13 @@ _SQLITE_DDL = [
 
 @pytest.fixture(scope="session", autouse=True)
 def _init_sqlite_schema_for_app():
-    """Создаёт таблицы на том же движке, что использует FastAPI (shared memory SQLite)."""
+    """DDL в shared SQLite только когда в прогоне есть интеграционные тесты.
+
+    Доменные тесты БД не используют — поднятие aiosqlite здесь оставляло процесс pytest
+    открытым десятки секунд после «28 passed».
+    """
+    if not _session_has_integration_tests:
+        return
     if "sqlite" not in os.environ.get("DATABASE_URL", "").lower():
         return
 
@@ -75,94 +101,3 @@ def _init_sqlite_schema_for_app():
         loop.run_until_complete(_run())
     finally:
         loop.close()
-
-
-@pytest.fixture(scope="session")
-def test_engine():
-    from app.infrastructure import db
-
-    return db.engine
-
-
-@pytest.fixture(scope="session")
-def test_session_factory(test_engine):
-    return async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
-
-
-@pytest.fixture
-async def sqlite_db_session(test_session_factory):
-    async with test_session_factory() as session:
-        yield session
-        await session.rollback()
-
-
-@pytest.fixture
-def sample_user_id():
-    return uuid.uuid4()
-
-
-# --- PostgreSQL: concurrent payment tests (README lab 2) ---
-
-
-def _postgres_url_for_concurrent_tests() -> str | None:
-    url = os.environ.get("DATABASE_URL", "")
-    if url.startswith("postgresql"):
-        return url
-    if "sqlite" in url.lower():
-        return None
-    return "postgresql+asyncpg://postgres:postgres@localhost:5432/marketplace"
-
-
-@pytest_asyncio.fixture
-async def db_session():
-    url = _postgres_url_for_concurrent_tests()
-    if url is None:
-        pytest.skip(
-            "Конкурентные тесты: задайте DATABASE_URL=postgresql+asyncpg://... "
-            "(например localhost при docker-compose up db)"
-        )
-    engine = create_async_engine(url, echo=False, pool_pre_ping=True)
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1 FROM order_statuses LIMIT 1"))
-    except Exception as exc:
-        await engine.dispose()
-        pytest.skip(
-            "Нужен PostgreSQL со схемой маркетплейса: "
-            f"docker-compose up -d db. ({exc})"
-        )
-
-    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    yield factory
-    await engine.dispose()
-
-
-@pytest_asyncio.fixture
-async def test_order(db_session):
-    user_id = uuid.uuid4()
-    order_id = uuid.uuid4()
-    email = f"concurrent_{uuid.uuid4().hex[:20]}@example.com"
-    async with db_session() as session:
-        await session.execute(
-            text(
-                "INSERT INTO users (id, email, name) "
-                "VALUES (CAST(:id AS uuid), :email, 'concurrent test')"
-            ),
-            {"id": str(user_id), "email": email},
-        )
-        await session.execute(
-            text(
-                "INSERT INTO orders (id, user_id, status, total_amount) "
-                "VALUES (CAST(:oid AS uuid), CAST(:uid AS uuid), 'created', 0)"
-            ),
-            {"oid": str(order_id), "uid": str(user_id)},
-        )
-        await session.execute(
-            text(
-                "INSERT INTO order_status_history (id, order_id, status, changed_at) "
-                "VALUES (uuid_generate_v4(), CAST(:oid AS uuid), 'created', NOW())"
-            ),
-            {"oid": str(order_id)},
-        )
-        await session.commit()
-    return order_id

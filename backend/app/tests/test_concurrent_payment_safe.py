@@ -2,6 +2,8 @@
 Тест для демонстрации РЕШЕНИЯ race condition (REPEATABLE READ + FOR UPDATE).
 """
 
+pytest_plugins = ("app.tests.conftest_concurrent",)
+
 import asyncio
 import time
 import uuid

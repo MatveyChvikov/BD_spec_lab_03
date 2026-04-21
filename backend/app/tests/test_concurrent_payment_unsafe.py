@@ -5,6 +5,8 @@
 Окно гонки узкое: при необходимости делается несколько попыток с новым заказом.
 """
 
+pytest_plugins = ("app.tests.conftest_concurrent",)
+
 import asyncio
 import uuid
 

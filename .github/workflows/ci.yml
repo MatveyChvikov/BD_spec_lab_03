@@ -534,7 +534,7 @@ jobs:
           cd backend
           pip install -r requirements.txt
           export PYTHONPATH="$(pwd)"
-          exec pytest app/tests/test_domain.py -q --tb=short
+          exec pytest app/tests/test_domain.py -q --tb=short -p no:anyio
 
   test-integration:
     name: Integration Tests
