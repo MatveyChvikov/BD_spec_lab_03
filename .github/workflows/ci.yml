@@ -6,9 +6,9 @@ on:
   pull_request:
     branches: [ main, master ]
 
-# Один актуальный прогон на ветку: при новом push предыдущие job'ы отменяются (иначе в списке висят «Cancelled»).
+# Один активный прогон на коммит: повторный запуск того же SHA отменит дубликат; новый push (другой SHA) не рвёт старый job.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -519,7 +519,7 @@ jobs:
     name: Test Domain + CRITICAL Payment Invariant
     runs-on: ubuntu-latest
     needs: [check-domain-implementation]
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v3
       
@@ -528,16 +528,13 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install dependencies
+      - name: Install deps and run domain tests
         run: |
+          set -euo pipefail
           cd backend
           pip install -r requirements.txt
-      
-      - name: Run domain tests (includes cannot pay twice)
-        run: |
-          cd backend
-          export PYTHONPATH=$(pwd)
-          pytest app/tests/test_domain.py -v --tb=short
+          export PYTHONPATH="$(pwd)"
+          exec pytest app/tests/test_domain.py -q --tb=short
 
   test-integration:
     name: Integration Tests
@@ -582,9 +579,10 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/marketplace_test
         run: |
+          set -euo pipefail
           cd backend
-          export PYTHONPATH=$(pwd)
-          pytest app/tests/test_integration.py -v --tb=short
+          export PYTHONPATH="$(pwd)"
+          exec pytest app/tests/test_integration.py -q --tb=short
 
   test-db-trigger:
     name: Test DB Trigger (Double Payment Prevention)
