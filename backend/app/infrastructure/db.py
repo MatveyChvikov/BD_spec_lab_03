@@ -16,7 +16,9 @@ def _session_factory():
     """Ленивая инициализация: движок привязывается к текущему event loop (важно для pytest+httpx)."""
     global _engine, _SessionLocal
     if _SessionLocal is None:
-        _engine = create_async_engine(DATABASE_URL, echo=True)
+        # echo=True заливает CI логи (интеграционные тесты) и может замедлять шаги Actions
+        _echo = os.getenv("SQLALCHEMY_ECHO", "").lower() in ("1", "true", "yes")
+        _engine = create_async_engine(DATABASE_URL, echo=_echo)
         _SessionLocal = async_sessionmaker(
             _engine, expire_on_commit=False, class_=AsyncSession
         )
