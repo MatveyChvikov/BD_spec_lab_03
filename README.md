@@ -62,7 +62,27 @@ curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5174/
 docker compose exec -T db pg_isready -U postgres
 ```
 
-В браузере: backend — http://localhost:8082/health , frontend — http://localhost:5174 . Порт Postgres на хосте: 5434 (с хоста: `localhost:5434`, из другого контейнера compose — сервис `db`, порт `5432`).
+Порт Postgres на хосте: **5434** (с хоста: `localhost:5434`; из контейнеров Compose — сервис `db`, порт **5432**).
+
+### Интерфейс в браузере
+
+После `docker compose up -d` можно открыть вручную:
+
+- фронтенд: http://localhost:5174  
+- проверка API: http://localhost:8082/health  
+
+**WSL2** (браузер Windows из терминала WSL):
+
+```bash
+cmd.exe /c start http://localhost:5174
+cmd.exe /c start http://localhost:8082/health
+```
+
+**Linux** с графикой:
+
+```bash
+xdg-open http://localhost:5174
+```
 
 ## Порядок выполнения SQL
 ```bash
@@ -95,6 +115,10 @@ docker compose exec -T db psql -U postgres -c "CREATE DATABASE marketplace_test;
 docker compose exec -T db psql -U postgres -d marketplace_test -f /docker-entrypoint-initdb.d/001_init.sql
 ```
 
+**Важно:** блок из трёх команд выше нужно выполнить **до** `pytest`. Иначе БД `marketplace_test` не существует: интеграционные тесты упадут с `database "marketplace_test" does not exist`, тесты конкурентной оплаты будут помечены как `SKIPPED`.
+
+**Каталог:** `pytest app/tests/` имеет смысл только **из `backend/`** (там лежит `app/tests/`). Если запустить `pytest app/tests/` из корня `lab_03`, будет ошибка `file or directory not found: app/tests/`.
+
 Из корня репозитория `lab_03`:
 
 ```bash
@@ -106,6 +130,8 @@ export PYTHONPATH="$(pwd)"
 export DATABASE_URL='postgresql+asyncpg://postgres:postgres@127.0.0.1:5434/marketplace_test'
 pytest app/tests/ -v --tb=short
 ```
+
+Без `source .venv/bin/activate` часто подхватывается системный `pytest` из дистрибутива — тогда не находится `pytest_asyncio` (`ModuleNotFoundError`). Проверка: `which pytest` должен указывать на `.../backend/.venv/bin/pytest`.
 
 Без локального venv можно так же из контейнера (после создания `marketplace_test` как выше):
 
@@ -129,15 +155,15 @@ lab_03/
 ├── README.md
 ├── QUICKSTART.md
 ├── STATUS.md
-├── REPORT.md                    # шаблон с TODO
+├── REPORT.md                    # отчёт по ЛР3
 └── sql/
     ├── 00_schema.sql            # справочный (опционально)
-    ├── 01_seed_100k.sql         # готовый
-    ├── 02_explain_before.sql    # TODO
-    ├── 03_indexes.sql           # TODO
-    ├── 04_explain_after_indexes.sql # TODO
-    ├── 05_partition_orders.sql  # TODO
-    └── 06_explain_after_partition.sql # TODO
+    ├── 01_seed_100k.sql         # готовый seed
+    ├── 02_explain_before.sql    # диагностика до оптимизаций
+    ├── 03_indexes.sql           # индексы
+    ├── 04_explain_after_indexes.sql # замеры после индексов
+    ├── 05_partition_orders.sql  # партиционирование orders
+    └── 06_explain_after_partition.sql # финальные замеры
 ```
 
 ## Критерии оценки

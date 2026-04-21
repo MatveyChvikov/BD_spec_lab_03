@@ -178,7 +178,24 @@ async def test_concurrent_payment(
     # Подсчитать успешные и неудачные попытки
     success_count = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
     error_count = sum(1 for r in results if isinstance(r, dict) and not r.get("success"))
-    
+
+    # Несколько записей paid в истории — инвариант нарушен, но не всегда из-за «только что» Safe:
+    # если обе попытки отклонены (заказ уже paid), дубли чаще от прошлого Unsafe / повторного теста.
+    stale_order = success_count == 0 and error_count == 2
+    duplicate_paid_in_history = len(history) > 1
+    race_condition_detected = duplicate_paid_in_history and not stale_order
+
+    if duplicate_paid_in_history and stale_order:
+        explanation = (
+            f"⚠️ В истории уже {len(history)} записей paid — заказ был оплачен ранее "
+            "(часто после режима Unsafe или повторного запуска). Для проверки Safe нажмите "
+            "«Создать тестовый заказ» и запустите параллельные оплаты один раз."
+        )
+    elif duplicate_paid_in_history:
+        explanation = f"⚠️ RACE CONDITION! В истории {len(history)} записей paid (двойная оплата)."
+    else:
+        explanation = f"✅ Ожидаемое поведение: в истории одна запись paid для этого заказа."
+
     return {
         "mode": request.mode,
         "order_id": str(request.order_id),
@@ -188,12 +205,8 @@ async def test_concurrent_payment(
             "successful": success_count,
             "failed": error_count,
             "payment_count_in_history": len(history),
-            "race_condition_detected": len(history) > 1
+            "race_condition_detected": race_condition_detected,
         },
         "history": history,
-        "explanation": (
-            f"⚠️ RACE CONDITION! Order was paid {len(history)} times!" 
-            if len(history) > 1 
-            else f"✅ No race condition. Order was paid {len(history)} time(s)."
-        )
+        "explanation": explanation,
     }
