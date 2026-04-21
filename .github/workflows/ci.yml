@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# Один актуальный прогон на ветку: при новом push предыдущие job'ы отменяются (иначе в списке висят «Cancelled»).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint Code
@@ -509,10 +514,12 @@ jobs:
           
           echo "✅ Domain classes are not empty"
 
+  # Один job вместо двух: меньше шансов «зависнуть» в очереди/лимитах; инвариант оплаты — часть test_domain.py
   test-domain:
-    name: Test Domain Invariants
+    name: Test Domain + CRITICAL Payment Invariant
     runs-on: ubuntu-latest
     needs: [check-domain-implementation]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v3
       
@@ -526,35 +533,11 @@ jobs:
           cd backend
           pip install -r requirements.txt
       
-      - name: Run domain tests
+      - name: Run domain tests (includes cannot pay twice)
         run: |
           cd backend
           export PYTHONPATH=$(pwd)
           pytest app/tests/test_domain.py -v --tb=short
-
-  test-payment-invariant:
-    name: Test CRITICAL Invariant (Cannot Pay Twice)
-    runs-on: ubuntu-latest
-    needs: [check-domain-implementation]
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
-        run: |
-          cd backend
-          pip install -r requirements.txt
-      
-      - name: Test critical payment invariant
-        run: |
-          cd backend
-          export PYTHONPATH=$(pwd)
-          echo "Testing CRITICAL invariant - order cannot be paid twice"
-          pytest app/tests/test_domain.py::TestCriticalPaymentInvariant -v
 
   test-integration:
     name: Integration Tests
@@ -683,7 +666,7 @@ jobs:
   summary:
     name: Summary
     runs-on: ubuntu-latest
-    needs: [lint, check-ddd-architecture, check-domain-implementation, check-sql-schema, check-implementation-complete, test-domain, test-payment-invariant, test-integration, test-db-trigger]
+    needs: [lint, check-ddd-architecture, check-domain-implementation, check-sql-schema, check-implementation-complete, test-domain, test-integration, test-db-trigger]
     if: always()
     steps:
       - name: Print summary
@@ -698,10 +681,9 @@ jobs:
           echo "3. ✓ Domain Implementation (classes not empty)"
           echo "4. ✓ SQL Schema (tables, constraints, triggers)"
           echo "5. ✓ Implementation Complete (no NotImplementedError)"
-          echo "6. ✓ Domain Tests (invariants)"
-          echo "7. ✓ CRITICAL: Payment Invariant Test"
-          echo "8. ✓ Integration Tests"
-          echo "9. ✓ DB Trigger Test (double payment prevention)"
+          echo "6. ✓ Domain Tests + CRITICAL payment invariant"
+          echo "7. ✓ Integration Tests"
+          echo "8. ✓ DB Trigger Test (double payment prevention)"
           echo ""
           echo "CRITICAL REQUIREMENT:"
           echo "Order cannot be paid twice - enforced at:"
